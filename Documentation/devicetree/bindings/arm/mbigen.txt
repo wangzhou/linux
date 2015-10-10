@@ -1,0 +1,85 @@
+Hisilicon mbigen device tree bindings.
+=======================================
+
+Mbigen means: message based interrupt generator.
+
+MBI is kind of msi interrupt only used on Non-PCI devices.
+
+To reduce the wired interrupt number connected to GIC,
+Hisilicon designed mbigen to collect and generate interrupt.
+
+
+Non-pci devices can connect to mbigen and generate the
+interrupt by writing ITS register.
+
+The mbigen chip and devices connect to mbigen have the following properties:
+
+Mbigen main node required properties:
+-------------------------------------------
+- compatible: Should be "hisilicon,mbigen-v2"
+- reg: Specifies the base physical address and size of the Mbigen
+  registers.
+
+Sub-nodes:
+---------------------------------------------
+Mbigen has one or more mbigen device nodes which represents the devices
+connected to this mbigen chip.
+
+These nodes must have the following properties:
+- compatible: Should be "hisilicon,mbigen-intc-v2"
+- interrupt controller: Identifies the node as an interrupt controller
+- msi-parent: This property has two cells.
+	The 1st cell specifies the ITS this device connected.
+	The 2nd cell specifies the device id.
+- nr-interrupts:Specifies the total number of interrupt this device has.
+- #interrupt-cells : Specifies the number of cells needed to encode an
+  interrupt source. The value is 2 now.
+
+  The 1st cell is global hardware pin number of the interrupt.
+		This value depends on the Soc design.
+  The 2nd the private index of the device. For a device with n interrupts,
+		this value is from 0 ~ n-1.
+
+Examples:
+
+		mbigen_dsa: interrupt-controller@c0080000 {
+			compatible = "hisilicon,mbigen-v2";
+			reg = <0xc0080000 0x10000>;
+
+			mbigen_device_gmac0 {
+				compatible = "hisilicon,mbigen-intc-v2";
+				interrupt-controller;
+				msi-parent = <&its 0x40b1c>;
+				nr-interrupts = <9>;
+				#interrupt-cells = <2>;
+			}
+
+			mbigen_device_02 {
+				compatible = "hisilicon,mbigen-intc-v2";
+				interrupt-controller;
+				msi-parent = <&its 0x40b1d>;
+				nr-interrupts = <3>;
+				#interrupt-cells = <2>;
+			}
+		};
+
+Device connect to mbigen required properties:
+----------------------------------------------------
+-interrupt-parent: Specifies the mbigen device node which device connected.
+-interrupts:specifies the interrupt source.
+  The 1st cell is global hardware pin number of the interrupt.
+		This value depends on the Soc design.
+  The 2nd the private index of the device. For a device with n interrupts,
+		this value is from 0 ~ n-1.
+
+Examples:
+	gmac0: ethernet@c2080000 {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg = <0 0xc2080000 0 0x20000>,
+		      <0 0xc0000000 0 0x1000>;
+		interrupt-parent  = <&mbigen_device_gmac0>;
+		interrupts = <656 0>,
+			<657 1>;
+	};
+
