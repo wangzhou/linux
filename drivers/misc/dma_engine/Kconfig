@@ -1,0 +1,4 @@
+config DMA_ENGINE_DEMO
+	tristate "Support DMA Engine Module"
+	help
+	  Working with qemu DMA engine demo module.
