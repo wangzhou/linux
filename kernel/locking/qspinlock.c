@@ -117,6 +117,7 @@ static inline __pure u32 encode_tail(int cpu, int idx)
 {
 	u32 tail;
 
+	/* w: 17 shift够么？*/
 	tail  = (cpu + 1) << _Q_TAIL_CPU_OFFSET;
 	tail |= idx << _Q_TAIL_IDX_OFFSET; /* assume < 4 */
 
@@ -321,9 +322,11 @@ void __lockfunc queued_spin_lock_slowpath(struct qspinlock *lock, u32 val)
 
 	BUILD_BUG_ON(CONFIG_NR_CPUS >= (1U << _Q_TAIL_CPU_BITS));
 
+	/* w: 半虚拟化? */
 	if (pv_enabled())
 		goto pv_queue;
 
+	/* w: 只有x86支持? */
 	if (virt_spin_lock(lock))
 		return;
 
@@ -333,14 +336,24 @@ void __lockfunc queued_spin_lock_slowpath(struct qspinlock *lock, u32 val)
 	 *
 	 * 0,1,0 -> 0,0,1
 	 */
+	/* 第一个cpu离开，已经有一个cpu在pending时，执行这个的应该是第三个cpu */
 	if (val == _Q_PENDING_VAL) {
 		int cnt = _Q_PENDING_LOOPS;
+		/*
+		 * VAL != _Q_PENDING_VAL定义读到的值不是xxx, cnt是retry的次数。
+		 * 停在这里等待第二个cpu占到锁或者第二个cpu占到然后释放锁，不过
+		 * 只try一次，所以这个条件过去后，还是有可能第二个cpu依然pending。
+		 */
 		val = atomic_cond_read_relaxed(&lock->val,
 					       (VAL != _Q_PENDING_VAL) || !cnt--);
 	}
 
 	/*
 	 * If we observe any contention; queue.
+	 */
+	/*
+	 * ~_Q_LOCKED_MASK为0xffffff00, 第三个cpu入口。(*, 1, 不关心)的情况，只要
+	 * 有pending就可以进来这里。
 	 */
 	if (val & ~_Q_LOCKED_MASK)
 		goto queue;
@@ -350,6 +363,21 @@ void __lockfunc queued_spin_lock_slowpath(struct qspinlock *lock, u32 val)
 	 *
 	 * 0,0,* -> 0,1,* -> 0,0,1 pending, trylock
 	 */
+	/*
+	 * 返回val的old值。第二个排队cpu入口，(0, 0, 1)的情况。(0, 1, 0)的情况
+	 * 在上面已经处理，(*, 1, 0/1)也已处理。
+	 *
+	 * 可能存在两个cpu抢(0, 0, 1)的情况。返回值是lock->val老值，所以可以根据
+	 * 返回的val做处理，这时后一个set pending bit的cpu得到老值是(0, 1, 1)。
+	 * 对于这种情况，后一个core上的lock请求要queue起来。
+	 *
+	 * 而且这里是只用pending bit覆盖val，所以还会出现其它的问题。比如当前 
+	 * core之前拿到的是(0, 0, 1)，但是在当前core走这个流程的时候，占有锁
+	 * 的core把锁去掉了，也就是val已经变(0, 0, 0)，如果是这样返回的val就是
+	 * (0, 0, 0)。这种情况应该不用管。
+	 *
+	 * 还有一种情况，
+	 */
 	val = queued_fetch_set_pending_acquire(lock);
 
 	/*
@@ -358,10 +386,15 @@ void __lockfunc queued_spin_lock_slowpath(struct qspinlock *lock, u32 val)
 	 * Undo and queue; our setting of PENDING might have made the
 	 * n,0,0 -> 0,0,0 transition fail and it will now be waiting
 	 * on @next to become !NULL.
+	 *
+	 * 没有理解上面的解释？上面的val & ~_Q_LOCKED_MASK不是已经拦住了(n,0,0)
+	 * 的状态么?
 	 */
+	/* 检测到如上的(0, 1, 1) */
 	if (unlikely(val & ~_Q_LOCKED_MASK)) {
 
 		/* Undo PENDING if we set it. */
+		/* 似乎这里总是走不到这个分支？*/
 		if (!(val & _Q_PENDING_MASK))
 			clear_pending(lock);
 
@@ -379,6 +412,12 @@ void __lockfunc queued_spin_lock_slowpath(struct qspinlock *lock, u32 val)
 	 * clear_pending_set_locked() implementations imply full
 	 * barriers.
 	 */
+	/*
+	 * pending等locked离开的逻辑，就是一直读等到locked是0。注意，这里有一个
+	 * 问题，如下的读等待里使用了ldxr + wfe，但是unlock的地方只是一个普通store,
+	 * 那么看来关键还时ldxr设exclusive这个标记，有这个标记后，只要对这个标记
+	 * 做invalid就可以触发wfe的唤醒。
+	 */
 	if (val & _Q_LOCKED_MASK)
 		smp_cond_load_acquire(&lock->locked, !VAL);
 
@@ -387,6 +426,7 @@ void __lockfunc queued_spin_lock_slowpath(struct qspinlock *lock, u32 val)
 	 *
 	 * 0,1,0 -> 0,0,1
 	 */
+	/* pending占据了锁，locked set 1，pending bit清理掉 */
 	clear_pending_set_locked(lock);
 	lockevent_inc(lock_pending);
 	return;
@@ -399,6 +439,7 @@ queue:
 	lockevent_inc(lock_slowpath);
 pv_queue:
 	node = this_cpu_ptr(&qnodes[0].mcs);
+	/* 看起来每个context是混乱编号的? */
 	idx = node->count++;
 	tail = encode_tail(smp_processor_id(), idx);
 
@@ -413,6 +454,7 @@ pv_queue:
 	 * any MCS node. This is not the most elegant solution, but is
 	 * simple enough.
 	 */
+	/* 怎么理解内核里只有四种上下文的spinlock? */
 	if (unlikely(idx >= MAX_NODES)) {
 		lockevent_inc(lock_no_node);
 		while (!queued_spin_trylock(lock))
@@ -443,6 +485,11 @@ pv_queue:
 	 * attempt the trylock once more in the hope someone let go while we
 	 * weren't watching.
 	 */
+	/*
+	 * 这里直接先try一把，如果pending/lock都是0，就确实轮到自己加锁了，因为
+	 * 这里的排队等锁，和其它核的放锁是在不同core上，是有可能在排队流程中，
+	 * 拥有锁的core已经把锁已经放掉的。
+	 */
 	if (queued_spin_trylock(lock))
 		goto release;
 
@@ -460,6 +507,7 @@ pv_queue:
 	 *
 	 * p,*,* -> n,*,*
 	 */
+	/* old是之前的tail */
 	old = xchg_tail(lock, tail);
 	next = NULL;
 
@@ -467,6 +515,7 @@ pv_queue:
 	 * if there was a previous node; link it and wait until reaching the
 	 * head of the waitqueue.
 	 */
+	/* 老的tail不是0，说明当前的节点不是第一个mcs node */
 	if (old & _Q_TAIL_MASK) {
 		prev = decode_tail(old);
 
@@ -474,6 +523,15 @@ pv_queue:
 		WRITE_ONCE(prev->next, node);
 
 		pv_wait_node(node, prev);
+		/*
+		 * 如果不是mcs list的第一个节点，就在当前节点spin等待。读到0就一直读。
+		 * 但是下面可以看到，这里即使等到，也会在下面locked前再次等到
+		 * pending/locked都是0。
+		 *
+		 * 注意，这里有ldxr + wfe的core睡眠。当这个读等待被解开时，note
+		 * 变成了第三个cpu，这个cpu在下面的代码上继续等待pending/locked
+		 * 为0。
+		 */
 		arch_mcs_spin_lock_contended(&node->locked);
 
 		/*
@@ -484,9 +542,21 @@ pv_queue:
 		 */
 		next = READ_ONCE(node->next);
 		if (next)
+			/* 预取当前第4个cpu的mcs node的指针 */
 			prefetchw(next);
 	}
 
+	/*
+	 * 当old & _Q_TAIL_MASK是0时，就是第一个mcs node进来时，会跳过前面的分支
+	 * 直接走到这里，这种情况下，第一个mcs node的cpu在这里等待pending/locked
+	 * 为0。
+	 *
+	 * 注意，上面分支中的等待解开，也会到这里。上面分支解开的点是，当第三个
+	 * cpu占有锁的时候会给后面的mcs node写1。
+	 *
+	 * 所以，第四个以及之后的cpu走到上面的点都会停下等待，但是，所有的解开等待
+	 * 的逻辑都发生在当时的第三个和第四个cpu之间。
+	 */
 	/*
 	 * we're at the head of the waitqueue, wait for the owner & pending to
 	 * go away.
@@ -511,6 +581,7 @@ pv_queue:
 	if ((val = pv_wait_head_or_lock(lock, node)))
 		goto locked;
 
+	/* 这种都是在循环等待，这里等到的条件是pending/locked都是0 */
 	val = atomic_cond_read_acquire(&lock->val, !(VAL & _Q_LOCKED_PENDING_MASK));
 
 locked:
@@ -535,8 +606,14 @@ locked:
 	 *       above wait condition, therefore any concurrent setting of
 	 *       PENDING will make the uncontended transition fail.
 	 */
+	/*
+	 * 这里有两种情况, 一个是只有一个mcs节点，一个是多于一个mcs节点的情况。
+	 * val是第三个cpu占有锁之前的lock->val状态，之前val中的tail已经是当前的
+	 * tail，证明当前的mcs node就是mcs node链表里唯一的一个mcs node。
+	 */
 	if ((val & _Q_TAIL_MASK) == tail) {
 		if (atomic_try_cmpxchg_relaxed(&lock->val, &val, _Q_LOCKED_VAL))
+			/* 第三个cpu直接占据锁，注意这个时候pending是空着。*/
 			goto release; /* No contention */
 	}
 
@@ -545,14 +622,29 @@ locked:
 	 * which will then detect the remaining tail and queue behind us
 	 * ensuring we'll see a @next.
 	 */
+	/* 走到这里，当前的mcs node后还有mcs node */
 	set_locked(lock);
 
 	/*
 	 * contended path; wait for next if not observed yet, release.
 	 */
+	/*
+	 * lock->val(tail)和mcs list不是同步更新的, 所以，可能val里的tail已经更新，
+	 * 这样上面已经可以检测到当前的mcs node不是唯一个，但是后面mcs node的指针
+	 * 还没有挂到当前mcs node的next上。所以，如果是这样，就等到后续mcs node
+	 * 挂上来。
+	 *
+	 * 注意，这里的条件读也是ldxr + wfe睡眠。
+	 */
 	if (!next)
 		next = smp_cond_load_relaxed(&node->next, (VAL));
 
+	/*
+	 * next是第二个mcs, 这里写1，会解开上面的spin，不过上面的等待里用wfe睡眠了。
+	 * 这里看似没有地方唤醒wfe，实际上ldxr + wfe的睡眠方式，在global monitor
+	 * 上记录了睡眠core的标记，普通的store会invalid，睡眠core上的cache line，
+	 * 就会唤醒wfe。
+	 */
 	arch_mcs_spin_unlock_contended(&next->locked);
 	pv_kick_node(lock, next);
 

@@ -66,9 +66,14 @@ typedef struct qspinlock {
  */
 #define	_Q_SET_MASK(type)	(((1U << _Q_ ## type ## _BITS) - 1)\
 				      << _Q_ ## type ## _OFFSET)
+
 #define _Q_LOCKED_OFFSET	0
 #define _Q_LOCKED_BITS		8
+/* w: */
 #define _Q_LOCKED_MASK		_Q_SET_MASK(LOCKED)
+//#define	_Q_SET_MASK(LOCKED) ((1U << _Q_LOCKED_BITS) - 1) << _Q_LOCKED_OFFSET
+//#define	_Q_SET_MASK(LOCKED) (1U << 8) - 1
+//#define	_Q_SET_MASK(LOCKED) 0xff
 
 #define _Q_PENDING_OFFSET	(_Q_LOCKED_OFFSET + _Q_LOCKED_BITS)
 #if CONFIG_NR_CPUS < (1U << 14)

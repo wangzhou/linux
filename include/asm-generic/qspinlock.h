@@ -94,6 +94,7 @@ static __always_inline int queued_spin_trylock(struct qspinlock *lock)
 	if (unlikely(val))
 		return 0;
 
+	/* w: 如果当前没有人占着锁 */
 	return likely(atomic_try_cmpxchg_acquire(&lock->val, &val, _Q_LOCKED_VAL));
 }
 
