@@ -1050,6 +1050,7 @@ void resched_curr(struct rq *rq)
 
 	cpu = cpu_of(rq);
 
+	/* wz: 什么语意？*/
 	if (cpu == smp_processor_id()) {
 		set_tsk_need_resched(curr);
 		set_preempt_need_resched();
@@ -6015,15 +6016,19 @@ __pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 	 * higher scheduling class, because otherwise those lose the
 	 * opportunity to pull in more work from other CPUs.
 	 */
+	/* wz: 当前的线程的调度等级比CFS低, class地址小，等级就低？*/
 	if (likely(!sched_class_above(prev->sched_class, &fair_sched_class) &&
 		   rq->nr_running == rq->cfs.h_nr_running)) {
 
 		p = pick_next_task_fair(rq, prev, rf);
+		/* wz: 为啥会有这个错误？*/
 		if (unlikely(p == RETRY_TASK))
 			goto restart;
 
 		/* Assume the next prioritized class is idle_sched_class */
+		/* wz: 一个线程都没有了？*/
 		if (!p) {
+			/* wz: 这是什么操作？*/
 			put_prev_task(rq, prev);
 			p = pick_next_task_idle(rq);
 		}
@@ -6039,6 +6044,7 @@ __pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 	}
 
 restart:
+	/* wz: ? */
 	put_prev_task_balance(rq, prev, rf);
 
 	/*
@@ -6049,6 +6055,7 @@ restart:
 	if (prev->dl_server)
 		prev->dl_server = NULL;
 
+	/* wz: 按调度优先级，一个一个class的调用其中的pick_next_task函数 */
 	for_each_class(class) {
 		p = class->pick_next_task(rq);
 		if (p)
@@ -6107,6 +6114,7 @@ pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 	struct rq *rq_i;
 	bool need_sync;
 
+	/* wz: 一般都走这个路径，sched_core特性是专门为SMT安全性做的，只在云场景有用 */
 	if (!sched_core_enabled(rq))
 		return __pick_next_task(rq, prev, rf);
 
@@ -6226,6 +6234,7 @@ pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 	 * For each thread: try and find a runnable task that matches @max or
 	 * force idle.
 	 */
+	/* wz: 找在同一个物理核上的硬件线程 */
 	for_each_cpu(i, smt_mask) {
 		rq_i = cpu_rq(i);
 		p = rq_i->core_pick;
@@ -6256,6 +6265,7 @@ pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 		rq->core->core_forceidle_occupation = occ;
 	}
 
+	/* wz: 各个sched class呢？*/
 	rq->core->core_pick_seq = rq->core->core_task_seq;
 	next = rq->core_pick;
 	rq->core_sched_seq = rq->core->core_pick_seq;
@@ -6271,6 +6281,7 @@ pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 	 * their task. This ensures there is no inter-sibling overlap between
 	 * non-matching user state.
 	 */
+	/* wz: ? */
 	for_each_cpu(i, smt_mask) {
 		rq_i = cpu_rq(i);
 
@@ -6581,6 +6592,8 @@ pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
  *   3. Wakeups don't really cause entry into schedule(). They add a
  *      task to the run-queue and that's it.
  *
+ *      wz: TIF_NEED_RESCHED是一个全局的flag还是一个线程级别的？
+ *
  *      Now, if the new task added to the run-queue preempts the current
  *      task, then the wakeup sets TIF_NEED_RESCHED and schedule() gets
  *      called on the nearest possible occasion:
@@ -6614,7 +6627,9 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 	int cpu;
 
 	cpu = smp_processor_id();
+	/* wz: 找到这个core的就绪队列 */
 	rq = cpu_rq(cpu);
+	/* wz: prev是正在跑的线程 */
 	prev = rq->curr;
 
 	schedule_debug(prev, !!sched_mode);
@@ -6648,22 +6663,28 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 	update_rq_clock(rq);
 	rq->clock_update_flags = RQCF_UPDATED;
 
+	/* wz: 非自愿让出cpu */
 	switch_count = &prev->nivcsw;
 
 	/*
 	 * We must load prev->state once (task_struct::state is volatile), such
 	 * that we form a control dependency vs deactivate_task() below.
 	 */
+	/* wz: __state就是线程状态, running是0，其它非零 */
 	prev_state = READ_ONCE(prev->__state);
+	/* wz: 非running时才能进来 */
 	if (!(sched_mode & SM_MASK_PREEMPT) && prev_state) {
+		/* wz: 睡眠的线程还有信号未处理，重新配置成running */
 		if (signal_pending_state(prev_state, prev)) {
 			WRITE_ONCE(prev->__state, TASK_RUNNING);
 		} else {
+			/* wz: 当前线程是不可中断，且不是noload/frozen的不可中断 */
 			prev->sched_contributes_to_load =
 				(prev_state & TASK_UNINTERRUPTIBLE) &&
 				!(prev_state & TASK_NOLOAD) &&
 				!(prev_state & TASK_FROZEN);
 
+			/* wz: 为啥用这个名字？*/
 			if (prev->sched_contributes_to_load)
 				rq->nr_uninterruptible++;
 
@@ -6678,13 +6699,19 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 			 *
 			 * After this, schedule() must not care about p->state any more.
 			 */
+			/* wz: 从rq上下来的线程放到哪里？难道之前已经放到了某个
+			 *     等待队列？现在只是从rq中去掉？
+			 *
+			 */
 			deactivate_task(rq, prev, DEQUEUE_SLEEP | DEQUEUE_NOCLOCK);
 
+			/* wz: ? */
 			if (prev->in_iowait) {
 				atomic_inc(&rq->nr_iowait);
 				delayacct_blkio_start();
 			}
 		}
+		/* wz: 非running时进来，就是之前有自愿放弃CPU？*/
 		switch_count = &prev->nvcsw;
 	}
 
@@ -6798,9 +6825,12 @@ static void sched_update_worker(struct task_struct *tsk)
 static __always_inline void __schedule_loop(unsigned int sched_mode)
 {
 	do {
+		/* wz: 为什么关抢占？保证不会有其它线程抢占？*/
 		preempt_disable();
+		/* wz: 这个函数可能是从sleep里醒来的 */
 		__schedule(sched_mode);
 		sched_preempt_enable_no_resched();
+	/* wz: ? */
 	} while (need_resched());
 }
 
@@ -6812,6 +6842,11 @@ asmlinkage __visible void __sched schedule(void)
 	lockdep_assert(!tsk->sched_rt_mutex);
 #endif
 
+	/* wz: 怎么理解这里的，当前线程不在就绪队列里？进这个函数的时候有可能
+	 *     改变线程的state值。
+	 *
+	 *     sched_submit_work？排空一些线程相关的任务？
+	 */
 	if (!task_is_running(tsk))
 		sched_submit_work(tsk);
 	__schedule_loop(SM_NONE);

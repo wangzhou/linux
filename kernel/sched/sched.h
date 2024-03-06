@@ -1528,6 +1528,7 @@ static inline u64 rq_clock_task(struct rq *rq)
 	lockdep_assert_rq_held(rq);
 	assert_clock_updated(rq);
 
+	/* wz: clock_task的单位是啥？*/
 	return rq->clock_task;
 }
 

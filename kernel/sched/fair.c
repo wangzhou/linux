@@ -1105,9 +1105,11 @@ static void update_tg_load_avg(struct cfs_rq *cfs_rq)
 
 static s64 update_curr_se(struct rq *rq, struct sched_entity *curr)
 {
+	/* wz: 单位是什么？*/
 	u64 now = rq_clock_task(rq);
 	s64 delta_exec;
 
+	/* wz: exec_start的语意是？*/
 	delta_exec = now - curr->exec_start;
 	if (unlikely(delta_exec <= 0))
 		return delta_exec;
@@ -1161,12 +1163,16 @@ static void update_curr(struct cfs_rq *cfs_rq)
 	if (unlikely(!curr))
 		return;
 
+	/* wz: 语意？*/
 	delta_exec = update_curr_se(rq_of(cfs_rq), curr);
 	if (unlikely(delta_exec <= 0))
 		return;
 
+	/* wz: vruntime看起来是包括sleep时间的？*/
 	curr->vruntime += calc_delta_fair(delta_exec, curr);
+	/* wz: ? */
 	update_deadline(cfs_rq, curr);
+	/* wz: ? */
 	update_min_vruntime(cfs_rq);
 
 	if (entity_is_task(curr))
@@ -3232,6 +3238,7 @@ static void task_numa_work(struct callback_head *work)
 		return;
 
 	if (p->numa_scan_period == 0) {
+		/* wz: 计算逻辑是啥？*/
 		p->numa_scan_period_max = task_scan_max(p);
 		p->numa_scan_period = task_scan_start(p);
 	}
@@ -5157,10 +5164,13 @@ static inline void update_misfit_status(struct task_struct *p, struct rq *rq) {}
 static void
 place_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 {
+	/* wz: ? */
 	u64 vslice, vruntime = avg_vruntime(cfs_rq);
 	s64 lag = 0;
 
+	/* wz: 基本调度时间？*/
 	se->slice = sysctl_sched_base_slice;
+	/* wz: 惩罚时间？*/
 	vslice = calc_delta_fair(se->slice, se);
 
 	/*
@@ -8400,6 +8410,7 @@ again:
 	 * hierarchy, only change the part that actually changes.
 	 */
 
+	/* wz: 为什么要搞个循环？*/
 	do {
 		struct sched_entity *curr = cfs_rq->curr;
 
