@@ -430,14 +430,17 @@ struct load_weight {
  * [load_avg definition]
  *
  *   load_avg = runnable% * scale_load_down(load)
+ *   wz: scale_load_down?
  *
  * [runnable_avg definition]
  *
  *   runnable_avg = runnable% * SCHED_CAPACITY_SCALE
+ *   wz: runnable%是rq time / 总时间？越小则sleep的比例越高。
  *
  * [util_avg definition]
  *
  *   util_avg = running% * SCHED_CAPACITY_SCALE
+ *   wz: runnning%是实际运行时间 / 总时间？
  *
  * where runnable% is the time ratio that a sched_entity is runnable and
  * running% the time ratio that a sched_entity is running.
@@ -471,6 +474,7 @@ struct load_weight {
 struct sched_avg {
 	u64				last_update_time;
 	u64				load_sum;
+	/* wz: 在rq里的时间 */
 	u64				runnable_sum;
 	u32				util_sum;
 	u32				period_contrib;

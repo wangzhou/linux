@@ -9557,6 +9557,7 @@ void update_group_capacity(struct sched_domain *sd, int cpu)
 	sdg->sgc->next_update = jiffies + interval;
 
 	if (!child) {
+		/* wz: 没有child, 那一个group里只有一个cpu */
 		update_cpu_capacity(sd, cpu);
 		return;
 	}
@@ -9698,13 +9699,16 @@ group_has_capacity(unsigned int imbalance_pct, struct sg_lb_stats *sgs)
 static inline bool
 group_is_overloaded(unsigned int imbalance_pct, struct sg_lb_stats *sgs)
 {
+	/* wz: 还是在本group均衡 */
 	if (sgs->sum_nr_running <= sgs->group_weight)
 		return false;
 
+	/* wz: 本组cpu的总能力，支撑不了负载？*/
 	if ((sgs->group_capacity * 100) <
 			(sgs->group_util * imbalance_pct))
 		return true;
 
+	/* wz: 本组cpu的总能力，支撑不了负载？和上面的区别是啥？*/
 	if ((sgs->group_capacity * imbalance_pct) <
 			(sgs->group_runnable * 100))
 		return true;
@@ -9717,18 +9721,23 @@ group_type group_classify(unsigned int imbalance_pct,
 			  struct sched_group *group,
 			  struct sg_lb_stats *sgs)
 {
+	/* wz: 不是group内不平衡的问题，是组的整体能力就不行 */
 	if (group_is_overloaded(imbalance_pct, sgs))
 		return group_overloaded;
 
+	/* wz: 因为affinity的原因，导致的不平衡。只有在再上一层的group中才会发现*/
 	if (sg_imbalanced(group))
 		return group_imbalanced;
 
+	/* wz: 为啥不在本group里先平衡? */
 	if (sgs->group_asym_packing)
 		return group_asym_packing;
 
+	/* wz: 为啥不在本group里先平衡? */
 	if (sgs->group_smt_balance)
 		return group_smt_balance;
 
+	/* wz: 为啥不在本group里先平衡? */
 	if (sgs->group_misfit_task_load)
 		return group_misfit_task;
 
@@ -9821,6 +9830,9 @@ static inline bool smt_balance(struct lb_env *env, struct sg_lb_stats *sgs,
 	 * Note that if a group has a single SMT, SD_SHARE_CPUCAPACITY
 	 * will not be on.
 	 */
+	/* wz: SMT的逻辑核上都有多个task的情况，把task移出这个SMT的domain?
+	 *     会不会local group和这个group在一个SMT domain。
+	 */
 	if (group->flags & SD_SHARE_CPUCAPACITY &&
 	    sgs->sum_h_nr_running > 1)
 		return true;
@@ -9908,14 +9920,20 @@ static inline void update_sg_lb_stats(struct lb_env *env,
 		nr_running = rq->nr_running;
 		sgs->sum_nr_running += nr_running;
 
+		/* wz: 一个rq上有多于一个的task，有什么影响？如果本group有多个core
+		 *     在本group做均衡就好啊！
+		 */
 		if (nr_running > 1)
 			*sg_status |= SG_OVERLOAD;
 
+		/* wz: 有core上的负载超过了core自己的能力 */
 		if (cpu_overutilized(i))
 			*sg_status |= SG_OVERUTILIZED;
 
 #ifdef CONFIG_NUMA_BALANCING
+		/* wz: ? */
 		sgs->nr_numa_running += rq->nr_numa_running;
+		/* wz: ? */
 		sgs->nr_preferred_running += rq->nr_preferred_running;
 #endif
 		/*
@@ -9930,10 +9948,13 @@ static inline void update_sg_lb_stats(struct lb_env *env,
 		if (local_group)
 			continue;
 
+		/* wz: 这个domain里的core有没有能力不等的，比如大小核 */
 		if (env->sd->flags & SD_ASYM_CPUCAPACITY) {
+			/* wz: group里每个rq的最大misfit值更新到group的misfit */
 			/* Check for a misfit task on the cpu */
 			if (sgs->group_misfit_task_load < rq->misfit_task_load) {
 				sgs->group_misfit_task_load = rq->misfit_task_load;
+				/* wz: 这也算过载了？*/
 				*sg_status |= SG_OVERLOAD;
 			}
 		} else if ((env->idle != CPU_NOT_IDLE) &&
@@ -9948,6 +9969,7 @@ static inline void update_sg_lb_stats(struct lb_env *env,
 
 	sgs->group_weight = group->group_weight;
 
+	/* wz: 本次检测不是local group, */
 	/* Check if dst CPU is idle and preferred to this group */
 	if (!local_group && env->sd->flags & SD_ASYM_PACKING &&
 	    env->idle != CPU_NOT_IDLE && sgs->sum_h_nr_running &&
@@ -9959,6 +9981,7 @@ static inline void update_sg_lb_stats(struct lb_env *env,
 	if (!local_group && smt_balance(env, sgs, group))
 		sgs->group_smt_balance = 1;
 
+	/* wz: 语意？imbalance_pct大概是117, 返回group的负载类型 */
 	sgs->group_type = group_classify(env->sd->imbalance_pct, group, sgs);
 
 	/* Computing avg_load makes sense only when group is overloaded */
@@ -10002,7 +10025,7 @@ static bool update_sd_pick_busiest(struct lb_env *env,
 	    (!capacity_greater(capacity_of(env->dst_cpu), sg->sgc->max_capacity) ||
 	     sds->local_stat.group_type != group_has_spare))
 		return false;
-
+	/* wz: group type大的就busier? */
 	if (sgs->group_type > busiest->group_type)
 		return true;
 
@@ -10013,7 +10036,7 @@ static bool update_sd_pick_busiest(struct lb_env *env,
 	 * The candidate and the current busiest group are the same type of
 	 * group. Let check which one is the busiest according to the type.
 	 */
-
+	/* wz: group type，目标group负载的种类 */
 	switch (sgs->group_type) {
 	case group_overloaded:
 		/* Select the overloaded group with highest avg_load. */
@@ -10021,6 +10044,7 @@ static bool update_sd_pick_busiest(struct lb_env *env,
 			return false;
 		break;
 
+		/* wz: busiest是imbalanced，因为affinity的不平衡也可以转？*/
 	case group_imbalanced:
 		/*
 		 * Select the 1st imbalanced group as we don't have any way to
@@ -10030,6 +10054,7 @@ static bool update_sd_pick_busiest(struct lb_env *env,
 
 	case group_asym_packing:
 		/* Prefer to move from lowest priority CPU's work */
+		/* wz: ? */
 		if (sched_asym_prefer(sg->asym_prefer_cpu, sds->busiest->asym_prefer_cpu))
 			return false;
 		break;
@@ -10573,15 +10598,18 @@ static inline void update_sd_lb_stats(struct lb_env *env, struct sd_lb_stats *sd
 	unsigned long sum_util = 0;
 	int sg_status = 0;
 
+	/* wz: 遍历domain里的每个group */
 	do {
 		struct sg_lb_stats *sgs = &tmp_sgs;
 		int local_group;
 
+		/* wz: local group就是当前cpu所在的group */
 		local_group = cpumask_test_cpu(env->dst_cpu, sched_group_span(sg));
 		if (local_group) {
 			sds->local = sg;
 			sgs = local;
 
+			/* wz: capacity的语意是CPU的能力 */
 			if (env->idle != CPU_NEWLY_IDLE ||
 			    time_after_eq(jiffies, sg->sgc->next_update))
 				update_group_capacity(env->sd, env->dst_cpu);
@@ -10589,10 +10617,11 @@ static inline void update_sd_lb_stats(struct lb_env *env, struct sd_lb_stats *sd
 
 		update_sg_lb_stats(env, sds, sg, sgs, &sg_status);
 
+		/* wz: local group不参与比较, 是找其它group里最忙的 */
 		if (local_group)
 			goto next_group;
 
-
+		/* wz: 如果传入的sg比sds中记录的busier，就更新记录的值 */
 		if (update_sd_pick_busiest(env, sds, sg, sgs)) {
 			sds->busiest = sg;
 			sds->busiest_stat = *sgs;
@@ -10616,6 +10645,7 @@ next_group:
 		sds->prefer_sibling = !!(sds->busiest->flags & SD_PREFER_SIBLING);
 
 
+	/* wz: fbq_type? commit id: 0ec8aa00f2 */
 	if (env->sd->flags & SD_NUMA)
 		env->fbq_type = fbq_classify_group(&sds->busiest_stat);
 
@@ -10859,6 +10889,7 @@ static struct sched_group *find_busiest_group(struct lb_env *env)
 	 */
 	update_sd_lb_stats(env, &sds);
 
+	/* wz: 没有找到busy的group */
 	/* There is no busy sibling group to pull tasks from */
 	if (!sds.busiest)
 		goto out_balanced;
@@ -10922,6 +10953,11 @@ static struct sched_group *find_busiest_group(struct lb_env *env)
 		/*
 		 * If the busiest group is more loaded, use imbalance_pct to be
 		 * conservative.
+		 */
+		/* wz: imbalance_pct是一个可调值，qemu上看是110，117, 这里看是给
+		 *     local load再加上一个系数，搞的迁移更加保守。
+		 *
+		 *     imbalance_pct越大，迁移越难。
 		 */
 		if (100 * busiest->avg_load <=
 				env->sd->imbalance_pct * local->avg_load)
@@ -11229,6 +11265,7 @@ static int should_we_balance(struct lb_env *env)
 	}
 
 	cpumask_copy(swb_cpus, group_balance_mask(sg));
+	/* wz: ? */
 	/* Try to find first idle CPU */
 	for_each_cpu_and(cpu, swb_cpus, env->cpus) {
 		if (!idle_cpu(cpu))
@@ -11284,6 +11321,7 @@ static int load_balance(int this_cpu, struct rq *this_rq,
 	struct cpumask *cpus = this_cpu_cpumask_var_ptr(load_balance_mask);
 	struct lb_env env = {
 		.sd		= sd,
+		/* wz: 总是找见最忙的cpu, 把上面的任务往这里迁移，所以本core是dst */
 		.dst_cpu	= this_cpu,
 		.dst_rq		= this_rq,
 		.dst_grpmask    = group_balance_mask(sd->groups),
@@ -11299,11 +11337,20 @@ static int load_balance(int this_cpu, struct rq *this_rq,
 	schedstat_inc(sd->lb_count[idle]);
 
 redo:
+	/* wz: 在domain里有idle的core。如果有idle的core，domain里其它core上又有
+	 *     排队的线程等待指令，为啥不迁移到这个idle core上跑！
+	 *
+	 *     为啥是group的第一个core或者是domain里的idle core，才能作为dst core?
+	 *     第一个core作为dts的合理性在哪里？
+	 */
 	if (!should_we_balance(&env)) {
 		*continue_balancing = 0;
 		goto out_balanced;
 	}
 
+	/* wz: 如果确实超过不均衡的程度，才返回busiest group，并计算不平衡的度量
+	 *     返回的group是NULL，那么直接停止本次均衡。
+	 */
 	group = find_busiest_group(&env);
 	if (!group) {
 		schedstat_inc(sd->lb_nobusyg[idle]);
@@ -11326,6 +11373,7 @@ redo:
 	ld_moved = 0;
 	/* Clear this flag as soon as we find a pullable task */
 	env.flags |= LBF_ALL_PINNED;
+	/* wz: 对应rq又排队，那就迁移 */
 	if (busiest->nr_running > 1) {
 		/*
 		 * Attempt to move tasks. If find_busiest_group has found
@@ -11333,6 +11381,7 @@ redo:
 		 * still unbalanced. ld_moved simply stays zero, so it is
 		 * correctly treated as an imbalance.
 		 */
+		/* wz: 这里nr_migrate/loop_max是什么语意？*/
 		env.loop_max  = min(sysctl_sched_nr_migrate, busiest->nr_running);
 
 more_balance:
@@ -11408,6 +11457,9 @@ more_balance:
 
 		/*
 		 * We failed to reach balance because of affinity.
+		 */
+		/* wz: 本domain里有affinity定住的task，父sd的group(包含本group),
+		 *     sgc->imbalance会配置上。
 		 */
 		if (sd_parent) {
 			int *group_imbalance = &sd_parent->groups->sgc->imbalance;
@@ -11559,6 +11611,7 @@ get_sd_balance_interval(struct sched_domain *sd, int cpu_busy)
 	if (cpu_busy)
 		interval -= 1;
 
+	/* wz: ? */
 	interval = clamp(interval, 1UL, max_load_balance_interval);
 
 	return interval;
@@ -11716,11 +11769,13 @@ static void rebalance_domains(struct rq *rq, enum cpu_idle_type idle)
 	u64 max_cost = 0;
 
 	rcu_read_lock();
+	/* wz: 遍历这个CPU的各个sched_domain */
 	for_each_domain(cpu, sd) {
 		/*
 		 * Decay the newidle max times here because this is a regular
 		 * visit to all the domains.
 		 */
+		/* wz: 看起来是到了时间，就向上扫描？*/
 		need_decay = update_newidle_cost(sd, 0);
 		max_cost += sd->max_newidle_lb_cost;
 
@@ -11729,20 +11784,26 @@ static void rebalance_domains(struct rq *rq, enum cpu_idle_type idle)
 		 * CPU in our sched group which is doing load balancing more
 		 * actively.
 		 */
+		/* wz: ？*/
 		if (!continue_balancing) {
+			/* wz: 往上走一级调度域 */
 			if (need_decay)
 				continue;
 			break;
 		}
 
+		/* wz: 得到这一级domain的扫描时间 */
 		interval = get_sd_balance_interval(sd, busy);
 
+		/* wz: 需要串行化操作？*/
 		need_serialize = sd->flags & SD_SERIALIZE;
 		if (need_serialize) {
 			if (!spin_trylock(&balancing))
+				/* wz: 为啥跑到上一级domain去了？*/
 				goto out;
 		}
 
+		/* wz: 到了时间才进行均衡的逻辑 */
 		if (time_after_eq(jiffies, sd->last_balance + interval)) {
 			if (load_balance(cpu, rq, sd, idle, &continue_balancing)) {
 				/*
@@ -11753,6 +11814,7 @@ static void rebalance_domains(struct rq *rq, enum cpu_idle_type idle)
 				idle = idle_cpu(cpu) ? CPU_IDLE : CPU_NOT_IDLE;
 				busy = idle != CPU_IDLE && !sched_idle_cpu(cpu);
 			}
+			/* wz: 记录这次balance的时刻 */
 			sd->last_balance = jiffies;
 			interval = get_sd_balance_interval(sd, busy);
 		}
@@ -11763,7 +11825,7 @@ out:
 			next_balance = sd->last_balance + interval;
 			update_next_balance = 1;
 		}
-	}
+        }
 	if (need_decay) {
 		/*
 		 * Ensure the rq-wide value also decays but keep it at a
@@ -11778,6 +11840,9 @@ out:
 	 * next_balance will be updated only when there is a need.
 	 * When the cpu is attached to null domain for ex, it will not be
 	 * updated.
+	 */
+	/* wz: rq->next_balance的逻辑没有搞懂？全部均衡时间超过1s，才会配置rq的
+	 *     next_balance是1。
 	 */
 	if (likely(update_next_balance))
 		rq->next_balance = next_balance;
@@ -12432,6 +12497,7 @@ out:
 static __latent_entropy void run_rebalance_domains(struct softirq_action *h)
 {
 	struct rq *this_rq = this_rq();
+	/* wz: rq->idle_balance语意是啥？*/
 	enum cpu_idle_type idle = this_rq->idle_balance ?
 						CPU_IDLE : CPU_NOT_IDLE;
 

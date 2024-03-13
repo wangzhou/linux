@@ -1246,6 +1246,7 @@ build_sched_groups(struct sched_domain *sd, int cpu)
 {
 	struct sched_group *first = NULL, *last = NULL;
 	struct sd_data *sdd = sd->private;
+	/* wz: 一个cls domain的span是，0/1/2/3 */
 	const struct cpumask *span = sched_domain_span(sd);
 	struct cpumask *covered;
 	int i;
@@ -1255,14 +1256,17 @@ build_sched_groups(struct sched_domain *sd, int cpu)
 
 	cpumask_clear(covered);
 
+	/* wz: 如果这里是cpu0 */
 	for_each_cpu_wrap(i, span, cpu) {
 		struct sched_group *sg;
 
+		/* wz: cls第二次进来，cpu0/1 continue， cpu3得到一个group */
 		if (cpumask_test_cpu(i, covered))
 			continue;
 
 		sg = get_group(i, sdd);
 
+		/* wz: sg的span是child domain的span */
 		cpumask_or(covered, covered, sched_group_span(sg));
 
 		if (!first)
@@ -1501,11 +1505,14 @@ __visit_domain_allocation_hell(struct s_data *d, const struct cpumask *cpu_map)
 {
 	memset(d, 0, sizeof(*d));
 
+	/* wz: 为各级和各个cpu分配domain/group等的内存 */
 	if (__sdt_alloc(cpu_map))
 		return sa_sd_storage;
+	/* wz: 这个语意是？*/
 	d->sd = alloc_percpu(struct sched_domain *);
 	if (!d->sd)
 		return sa_sd_storage;
+	/* wz: 这个语意是？*/
 	d->rd = alloc_rootdomain();
 	if (!d->rd)
 		return sa_sd;
@@ -2209,6 +2216,7 @@ static int __sdt_alloc(const struct cpumask *cpu_map)
 	struct sched_domain_topology_level *tl;
 	int j;
 
+	/* wz: 对于每一层: SMT/CLS/MC/NUMA, MC相当于NUMA节点内，NUMA相当于系统范围？*/
 	for_each_sd_topology(tl) {
 		struct sd_data *sdd = &tl->data;
 
@@ -2239,6 +2247,7 @@ static int __sdt_alloc(const struct cpumask *cpu_map)
 			if (!sd)
 				return -ENOMEM;
 
+			/* wz: 注意访问per-cpu变量 */
 			*per_cpu_ptr(sdd->sd, j) = sd;
 
 			sds = kzalloc_node(sizeof(struct sched_domain_shared),
@@ -2407,11 +2416,14 @@ build_sched_domains(const struct cpumask *cpu_map, struct sched_domain_attr *att
 			if (WARN_ON(!topology_span_sane(tl, cpu_map, i)))
 				goto error;
 
+			/* wz: 分domain里的cpu mask，用span域段表示 */
 			sd = build_sched_domain(tl, cpu_map, attr, sd, i);
 
 			has_asym |= sd->flags & SD_ASYM_CPUCAPACITY;
 
+			/* wz: SMT的时候，也就是最底层的时候进来这里 */
 			if (tl == sched_domain_topology)
+				/* wz: 把最底层的domain给到d.sd，下面要用 */
 				*per_cpu_ptr(d.sd, i) = sd;
 			if (tl->flags & SDTL_OVERLAP)
 				sd->flags |= SD_OVERLAP;
@@ -2422,12 +2434,14 @@ build_sched_domains(const struct cpumask *cpu_map, struct sched_domain_attr *att
 
 	/* Build the groups for the domains */
 	for_each_cpu(i, cpu_map) {
+		/* wz: d.sd时最底层的domain, 单个cpu，从底到高，初始化group */
 		for (sd = *per_cpu_ptr(d.sd, i); sd; sd = sd->parent) {
 			sd->span_weight = cpumask_weight(sched_domain_span(sd));
 			if (sd->flags & SD_OVERLAP) {
 				if (build_overlap_sched_groups(sd, i))
 					goto error;
 			} else {
+				/* wz: 只完成一层一个cpu上的sd里的group */
 				if (build_sched_groups(sd, i))
 					goto error;
 			}
@@ -2450,6 +2464,7 @@ build_sched_domains(const struct cpumask *cpu_map, struct sched_domain_attr *att
 				struct sched_domain __rcu *top_p;
 				unsigned int nr_llcs;
 
+				/* wz: 硬件如何向软件传递LLC per node? */
 				/*
 				 * For a single LLC per node, allow an
 				 * imbalance up to 12.5% of the node. This is

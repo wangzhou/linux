@@ -180,6 +180,7 @@ static __always_inline int
 ___update_load_sum(u64 now, struct sched_avg *sa,
 		  unsigned long load, unsigned long runnable, int running)
 {
+	/* wz: 单位是ns？*/
 	u64 delta;
 
 	delta = now - sa->last_update_time;
@@ -196,10 +197,12 @@ ___update_load_sum(u64 now, struct sched_avg *sa,
 	 * Use 1024ns as the unit of measurement since it's a reasonable
 	 * approximation of 1us and fast to compute.
 	 */
+	/* wz: 变成us? */
 	delta >>= 10;
 	if (!delta)
 		return 0;
 
+	/* wz: 变回ns? */
 	sa->last_update_time += delta << 10;
 
 	/*
