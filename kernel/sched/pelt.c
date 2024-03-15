@@ -105,6 +105,7 @@ accumulate_sum(u64 delta, struct sched_avg *sa,
 	u32 contrib = (u32)delta; /* p == 0 -> delta < 1024 */
 	u64 periods;
 
+	/* wz: period_contrib的语意是上次period值的1024余留? */
 	delta += sa->period_contrib;
 	periods = delta / 1024; /* A period is 1024us (~1ms) */
 
@@ -112,6 +113,7 @@ accumulate_sum(u64 delta, struct sched_avg *sa,
 	 * Step 1: decay old *_sum if we crossed period boundaries.
 	 */
 	if (periods) {
+		/* wz: periods个统计段, sum是step1的数据 */
 		sa->load_sum = decay_load(sa->load_sum, periods);
 		sa->runnable_sum =
 			decay_load(sa->runnable_sum, periods);
@@ -120,6 +122,7 @@ accumulate_sum(u64 delta, struct sched_avg *sa,
 		/*
 		 * Step 2
 		 */
+		/* delta为d3 */
 		delta %= 1024;
 		if (load) {
 			/*
@@ -134,15 +137,20 @@ accumulate_sum(u64 delta, struct sched_avg *sa,
 			 */
 			contrib = __accumulate_pelt_segments(periods,
 					1024 - sa->period_contrib, delta);
+			/* wz: ? */
 		}
 	}
 	sa->period_contrib = delta;
 
+	/* wz: contrib已经是step2的数据了 */
 	if (load)
+		/* wz: load表示在不在rq里 */
 		sa->load_sum += load * contrib;
 	if (runnable)
+		/* wz: runnable表示在不在rq里，支持task和group? */
 		sa->runnable_sum += runnable * contrib << SCHED_CAPACITY_SHIFT;
 	if (running)
+		/* wz：running表示是否正在cpu上运行 */
 		sa->util_sum += contrib << SCHED_CAPACITY_SHIFT;
 
 	return periods;
@@ -200,9 +208,9 @@ ___update_load_sum(u64 now, struct sched_avg *sa,
 	/* wz: 变成us? */
 	delta >>= 10;
 	if (!delta)
+	/* wz: 变化在1us之内 */
 		return 0;
 
-	/* wz: 变回ns? */
 	sa->last_update_time += delta << 10;
 
 	/*
@@ -306,8 +314,10 @@ int __update_load_avg_blocked_se(u64 now, struct sched_entity *se)
 	return 0;
 }
 
+/* wz: now的但是是ns */
 int __update_load_avg_se(u64 now, struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
+	/* wz; input的load/runnable/running的语意是？load表示不在rq里，*/
 	if (___update_load_sum(now, &se->avg, !!se->on_rq, se_runnable(se),
 				cfs_rq->curr == se)) {
 
